@@ -29,15 +29,6 @@ have normal spec behavior.
 """
 
 
-def target_iter(target, scope):
-    iterate = scope[TargetRegistry].get_handler('iterate', target, path=scope[Path])
-
-    try:
-        iterator = iterate(target)
-    except Exception as e:
-        raise TypeError('failed to iterate on instance of type %r at %r (got %r)'
-                        % (target.__class__.__name__, Path(*scope[Path]), e))
-    return iterator
 
 
 class Group:
@@ -72,23 +63,6 @@ class Group:
     def __init__(self, spec):
         self.spec = spec
 
-    def glomit(self, target, scope):
-        scope[MODE] = GROUP
-        scope[CUR_AGG] = None  # reset aggregation tripwire for sub-specs
-        scope[ACC_TREE] = {}
-
-        # handle the basecase where the spec stops immediately
-        # TODO: something smarter
-        if type(self.spec) in (dict, list):
-            ret = type(self.spec)()
-        else:
-            ret = None
-
-        for t in target_iter(target, scope):
-            last, ret = ret, scope[glom](t, self.spec, scope)
-            if ret is STOP:
-                return last
-        return ret
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -99,60 +73,7 @@ def GROUP(target, spec, scope):
     """
     Group mode dispatcher; also sentinel for current mode = group
     """
-    recurse = lambda spec: scope[glom](target, spec, scope)
-    tree = scope[ACC_TREE]  # current accumulator support structure
-    if callable(getattr(spec, "agg", None)):
-        return spec.agg(target, tree)
-    elif callable(spec):
-        return spec(target)
-    _spec_type = type(spec)
-    if _spec_type not in (dict, list):
-        raise BadSpec("Group mode expected dict, list, callable, or"
-                      " aggregator, not: %r" % (spec,))
-    _spec_id = id(spec)
-    try:
-        acc = tree[_spec_id]  # current accumulator
-    except KeyError:
-        acc = tree[_spec_id] = _spec_type()
-    if _spec_type is dict:
-        done = True
-        for keyspec, valspec in spec.items():
-            if tree.get(keyspec, None) is STOP:
-                continue
-            key = recurse(keyspec)
-            if key is SKIP:
-                done = False  # SKIP means we still want more vals
-                continue
-            if key is STOP:
-                tree[keyspec] = STOP
-                continue
-            if key not in acc:
-                # TODO: guard against key == id(spec)
-                tree[key] = {}
-            scope[ACC_TREE] = tree[key]
-            result = recurse(valspec)
-            if result is STOP:
-                tree[keyspec] = STOP
-                continue
-            done = False  # SKIP or returning a value means we still want more vals
-            if result is not SKIP:
-                acc[key] = result
-        if done:
-            return STOP
-        return acc
-    elif _spec_type is list:
-        for valspec in spec:
-            if type(valspec) is dict:
-                # doesn't make sense due to arity mismatch. did you mean [Auto({...})] ?
-                raise BadSpec('dicts within lists are not'
-                              ' allowed while in Group mode: %r' % spec)
-            result = recurse(valspec)
-            if result is STOP:
-                return STOP
-            if result is not SKIP:
-                acc.append(result)
-        return acc
-    raise ValueError(f"{_spec_type} not a valid spec type for Group mode")  # pragma: no cover
+    pass
 
 
 class First:
@@ -164,11 +85,6 @@ class First:
     """
     __slots__ = ()
 
-    def agg(self, target, tree):
-        if self not in tree:
-            tree[self] = STOP
-            return target
-        return STOP
 
     def __repr__(self):
         return '%s()' % self.__class__.__name__
@@ -184,15 +100,6 @@ class Avg:
     """
     __slots__ = ()
 
-    def agg(self, target, tree):
-        try:
-            avg_acc = tree[self]
-        except KeyError:
-            # format is [sum, count]
-            avg_acc = tree[self] = [0.0, 0]
-        avg_acc[0] += target
-        avg_acc[1] += 1
-        return avg_acc[0] / avg_acc[1]
 
     def __repr__(self):
         return '%s()' % self.__class__.__name__
@@ -208,10 +115,6 @@ class Max:
     """
     __slots__ = ()
 
-    def agg(self, target, tree):
-        if self not in tree or target > tree[self]:
-            tree[self] = target
-        return tree[self]
 
     def __repr__(self):
         return '%s()' % self.__class__.__name__
@@ -227,10 +130,6 @@ class Min:
     """
     __slots__ = ()
 
-    def agg(self, target, tree):
-        if self not in tree or target < tree[self]:
-            tree[self] = target
-        return tree[self]
 
     def __repr__(self):
         return '%s()' % self.__class__.__name__
@@ -254,20 +153,6 @@ class Sample:
     def __init__(self, size):
         self.size = size
 
-    def agg(self, target, tree):
-        # simple reservoir sampling scheme
-        # https://en.wikipedia.org/wiki/Reservoir_sampling#Simple_algorithm
-        if self not in tree:
-            tree[self] = [0, []]
-        num_seen, sample = tree[self]
-        if len(sample) < self.size:
-            sample.append(target)
-        else:
-            pos = random.randint(0, num_seen)
-            if pos < self.size:
-                sample[pos] = target
-        tree[self][0] += 1
-        return sample
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.size!r})'
@@ -300,17 +185,6 @@ class Limit:
         self.n = n
         self.subspec = subspec
 
-    def glomit(self, target, scope):
-        if scope[MODE] is not GROUP:
-            raise BadSpec("Limit() only valid in Group mode")
-        tree = scope[ACC_TREE]  # current accumulator support structure
-        if self not in tree:
-            tree[self] = [0, {}]
-        scope[ACC_TREE] = tree[self][1]
-        tree[self][0] += 1
-        if tree[self][0] > self.n:
-            return STOP
-        return scope[glom](target, self.subspec, scope)
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.n!r}, {self.subspec!r})'

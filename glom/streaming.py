@@ -82,38 +82,8 @@ class Iter:
             chunks.append('.' + format_invocation(fname, args, kwargs, repr=bbrepr))
         return ''.join(chunks)
 
-    def glomit(self, target, scope):
-        iterator = self._iterate(target, scope)
 
-        for _, _, callback in reversed(self._iter_stack):
-            iterator = callback(iterator, scope)
 
-        return iter(iterator)
-
-    def _iterate(self, target, scope):
-        iterate = scope[TargetRegistry].get_handler('iterate', target, path=scope[Path])
-        try:
-            iterator = iterate(target)
-        except Exception as e:
-            raise TypeError('failed to iterate on instance of type %r at %r (got %r)'
-                            % (target.__class__.__name__, Path(*scope[Path]), e))
-
-        base_path = scope[Path]
-        for i, t in enumerate(iterator):
-            scope[Path] = base_path + [i]
-            yld = (t if self.subspec is T else scope[glom](t, self.subspec, scope))
-            if yld is SKIP:
-                continue
-            elif yld is self.sentinel or yld is STOP:
-                # NB: sentinel defaults to STOP so I was torn whether
-                # to also check for STOP, and landed on the side of
-                # never letting STOP through.
-                return
-            yield yld
-        return
-
-    def _add_op(self, opname, args, callback):
-        return type(self)(subspec=self.subspec, _iter_stack=[(opname, args, callback)] + self._iter_stack)
 
     def map(self, subspec):
         """Return a new :class:`Iter()` spec which will apply the provided
@@ -129,13 +99,7 @@ class Iter:
         >>> glom(['a', 'B', 'C'], Iter().map(T.islower()).all())
         [True, False, False]
         """
-        # whatever validation you want goes here
-        # TODO: DRY the self._add_op with a decorator?
-        return self._add_op(
-            'map',
-            (subspec,),
-            lambda iterable, scope: imap(
-                lambda t: scope[glom](t, subspec, scope), iterable))
+        pass
 
     def filter(self, key=T):
         """Return a new :class:`Iter()` spec which will include only elements matching the
@@ -154,15 +118,7 @@ class Iter:
         [2, 3, 8]
 
         """
-        # NB: Check's validate function defaults to bool, and
-        # *default* is returned on access errors as well validation
-        # errors, so the lambda passed to ifilter below works fine.
-        check_spec = key if isinstance(key, Check) else Check(key, default=SKIP)
-        return self._add_op(
-            'filter',
-            (key,),
-            lambda iterable, scope: ifilter(
-                lambda t: scope[glom](t, check_spec, scope) is not SKIP, iterable))
+        pass
 
     def chunked(self, size, fill=_MISSING):
         """Return a new :class:`Iter()` spec which groups elements in the iterable
@@ -177,13 +133,7 @@ class Iter:
         >>> list(glom(range(10), Iter().chunked(3, fill=None)))
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, None, None]]
         """
-        kw = {'size': size}
-        args = size,
-        if fill is not _MISSING:
-            kw['fill'] = fill
-            args += (fill,)
-        return self._add_op(
-            'chunked', args, lambda it, scope: chunked_iter(it, **kw))
+        pass
 
     def windowed(self, size):
         """Return a new :class:`Iter()` spec which will yield a sliding window of
@@ -195,8 +145,7 @@ class Iter:
         >>> list(glom(range(4), Iter().windowed(2)))
         [(0, 1), (1, 2), (2, 3)]
         """
-        return self._add_op(
-            'windowed', (size,), lambda it, scope: windowed_iter(it, size))
+        pass
 
     def split(self, sep=None, maxsplit=None):
         """Return a new :class:`Iter()` spec which will lazily split an iterable based
@@ -224,10 +173,7 @@ class Iter:
         [[1, 2], [3], [4, None]]
 
         """
-        return self._add_op(
-            'split',
-            (sep, maxsplit),
-            lambda it, scope: split_iter(it, sep=sep, maxsplit=maxsplit))
+        pass
 
     def flatten(self):
         """Returns a new :class:`Iter()` instance which combines iterables into a
@@ -237,10 +183,7 @@ class Iter:
         >>> list(glom(target, Iter().flatten()))
         [1, 2, 3, 4, 5]
         """
-        return self._add_op(
-            'flatten',
-            (),
-            lambda it, scope: chain.from_iterable(it))
+        pass
 
     def unique(self, key=T):
         """Return a new :class:`Iter()` spec which lazily filters out duplicate
@@ -252,10 +195,7 @@ class Iter:
         >>> print(''.join(out))
         gloMIcus
         """
-        return self._add_op(
-            'unique',
-            (key,),
-            lambda it, scope: unique_iter(it, key=lambda t: scope[glom](t, key, scope)))
+        pass
 
 
     def slice(self, *args):
@@ -270,19 +210,13 @@ class Iter:
 
         This method accepts only positional arguments.
         """
-        # TODO: make a kwarg-compatible version of this (islice takes no kwargs)
-        # TODO: also support slice syntax Iter()[::]
-        try:
-            islice([], *args)
-        except TypeError:
-            raise TypeError(f'invalid slice arguments: {args!r}')
-        return self._add_op('slice', args, lambda it, scope: islice(it, *args))
+        pass
 
     def limit(self, count):
         """A convenient alias for :meth:`~Iter.slice`, which takes a single
         argument, *count*, the max number of items to yield.
         """
-        return self._add_op('limit', (count,), lambda it, scope: islice(it, count))
+        pass
 
     def takewhile(self, key=T):
         """Returns a new :class:`Iter()` spec which stops the stream once
@@ -293,11 +227,7 @@ class Iter:
 
         :func:`itertools.takewhile` for more details.
         """
-        return self._add_op(
-            'takewhile',
-            (key,),
-            lambda it, scope: takewhile(
-                lambda t: scope[glom](t, key, scope), it))
+        pass
 
     def dropwhile(self, key=T):
         """Returns a new :class:`Iter()` spec which drops stream items until
@@ -313,12 +243,7 @@ class Iter:
         :func:`itertools.dropwhile` for more details.
 
         """
-
-        return self._add_op(
-            'dropwhile',
-            (key,),
-            lambda it, scope: dropwhile(
-                lambda t: scope[glom](t, key, scope), it))
+        pass
 
     # Terminal methods follow
 
@@ -332,7 +257,7 @@ class Iter:
         Note that this spec will always consume the whole iterable, and as
         such, the spec returned is *not* an :class:`Iter()` instance.
         """
-        return Pipe(self, list)
+        pass
 
     def first(self, key=T, default=None):
         """A convenience method for lazily yielding a single truthy item from
@@ -349,7 +274,7 @@ class Iter:
         As this spec yields at most one item, and not an iterable, the
         spec returned from this method is not an :class:`Iter()` instance.
         """
-        return (self, First(key=key, default=default))
+        pass
 
 
 class First:
@@ -375,8 +300,6 @@ class First:
         spec_glom = Spec(Call(partial, args=(Spec(self._spec).glom,), kwargs={'scope': S}))
         self._first = Call(first, args=(T,), kwargs={'default': default, 'key': spec_glom})
 
-    def glomit(self, target, scope):
-        return self._first.glomit(target, scope)
 
     def __repr__(self):
         cn = self.__class__.__name__

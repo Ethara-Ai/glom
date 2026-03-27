@@ -444,8 +444,6 @@ _email_autoincrement = lambda c=count(1): next(c)
 _contact_autoincrement = lambda c=count(1): next(c)
 
 
-def _default_email(contact):
-    return contact.emails[0] if contact.emails else None
 
 
 @attr.s
@@ -454,11 +452,7 @@ class ContactManager:
     OrderedDict instead of a database. Those familiar with Django and
     SQLAlchemy will recognize the pattern being sketched here.
     """
-    def all(self):
-        return list(CONTACTS.values())
 
-    def save(self, contact):
-        CONTACTS[contact.id] = contact
 
     def get(self, contact_id):
         return CONTACTS.get(contact_id)
@@ -482,8 +476,6 @@ class Contact:
     # mentioned in the ContactManager docstring
     objects = ContactManager()
 
-    def save(self):
-        self.objects.save(self)
 
 
 @attr.s

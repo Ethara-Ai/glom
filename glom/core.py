@@ -129,42 +129,8 @@ class GlomError(Exception):
     (e.g., ``len``, ``sum``, any ``lambda``) will not be wrapped in a
     GlomError.
     """
-    @classmethod
-    def wrap(cls, exc):
-        # TODO: need to test this against a wide array of exception types
-        # this approach to wrapping errors works for exceptions
-        # defined in pure-python as well as C
-        exc_type = type(exc)
-        bases = (GlomError,) if issubclass(GlomError, exc_type) else (exc_type, GlomError)
-        exc_wrapper_type = type(f"GlomError.wrap({exc_type.__name__})", bases, {})
-        try:
-            wrapper = exc_wrapper_type(*exc.args)
-            wrapper.__wrapped = exc
-            return wrapper
-        except Exception:  # maybe exception can't be re-created
-            return exc
 
-    def _set_wrapped(self, exc):
-        self.__wrapped = exc
 
-    def _finalize(self, scope):
-        # careful when changing how this functionality works; pytest seems to mess with
-        # the traceback module or sys.exc_info(). we saw different stacks when originally
-        # developing this in June 2020.
-        etype, evalue, _ = sys.exc_info()
-        tb_lines = traceback.format_exc().strip().splitlines()
-        limit = 0
-        for line in reversed(tb_lines):
-            if _PKG_DIR_PATH in line:
-                limit -= 1
-                break
-            limit += 1
-        self._tb_lines = tb_lines[-limit:]
-        # if the first line is trying to put a caret at a byte-code location on a line that
-        # isn't being displayed, skip it
-        if set(self._tb_lines[0]) <= {' ', '^', '~'}:
-            self._tb_lines = self._tb_lines[1:]
-        self._scope = scope
 
     def __str__(self):
         if getattr(self, '_finalized_str', None):
@@ -198,85 +164,16 @@ def _unpack_stack(scope, only_errors=True):
     only_errors=False could be useful for debugger / introspection (similar
     to traceback.print_stack())
     """
-    stack = []
-    scope = scope.maps[0]
-    while LAST_CHILD_SCOPE in scope:
-        child = scope[LAST_CHILD_SCOPE]
-        branches = scope[CHILD_ERRORS]
-        if branches == [child]:
-            branches = []  # if there's only one branch, count it as linear
-        stack.append([scope, scope[Spec], scope[T], scope.get(CUR_ERROR), branches])
-
-        # NB: this id() business is necessary to avoid a
-        # nondeterministic bug in abc's __eq__ see #189 for details
-        if id(child) in [id(b) for b in branches]:
-            break  # if child already covered by branches, stop the linear descent
-
-        scope = child.maps[0]
-    else:  # if break executed above, cur scope was already added
-        stack.append([scope, scope[Spec], scope[T], scope.get(CUR_ERROR), []])
-    # push errors "down" to where they were first raised / first observed
-    for i in range(len(stack) - 1):
-        cur, nxt = stack[i], stack[i + 1]
-        if cur[3] == nxt[3]:
-            cur[3] = None
-    if only_errors:  # trim the stack to the last error
-        # leave at least 1 to not break formatting func below
-        # TODO: make format_target_spec_trace() tolerate an "empty" stack cleanly
-        while len(stack) > 1 and stack[-1][3] is None:
-            stack.pop()
-    return stack
+    pass
 
 
-def _format_trace_value(value, maxlen):
-    s = bbrepr(value).replace("\\'", "'")
-    if len(s) > maxlen:
-        try:
-            suffix = '... (len=%s)' % len(value)
-        except Exception:
-            suffix = '...'
-        s = s[:maxlen - len(suffix)] + suffix
-    return s
 
 
 def format_target_spec_trace(scope, root_error, width=TRACE_WIDTH, depth=0, prev_target=_MISSING, last_branch=True):
     """
     unpack a scope into a multi-line but short summary
     """
-    segments = []
-    indent = " " + "|" * depth
-    tick = "| " if depth else "- "
-    def mk_fmt(label, t=None):
-        pre = indent + (t or tick) + label + ": "
-        fmt_width = width - len(pre)
-        return lambda v: pre + _format_trace_value(v, fmt_width)
-    fmt_t = mk_fmt("Target")
-    fmt_s = mk_fmt("Spec")
-    fmt_b = mk_fmt("Spec", "+ ")
-    recurse = lambda s, last=False: format_target_spec_trace(s, root_error, width, depth + 1, prev_target, last)
-    tb_exc_line = lambda e: "".join(traceback.format_exception_only(type(e), e))[:-1]
-    fmt_e = lambda e: indent + tick + tb_exc_line(e)
-    for scope, spec, target, error, branches in _unpack_stack(scope):
-        if target is not prev_target:
-            segments.append(fmt_t(target))
-        prev_target = target
-        if branches:
-            segments.append(fmt_b(spec))
-            segments.extend([recurse(s) for s in branches[:-1]])
-            segments.append(recurse(branches[-1], last_branch))
-        else:
-            segments.append(fmt_s(spec))
-        if error is not None and error is not root_error:
-            last_line_error = True
-            segments.append(fmt_e(error))
-        else:
-            last_line_error = False
-    if depth:  # \ on first line, X on last line
-        remark = lambda s, m: s[:depth + 1] + m + s[depth + 2:]
-        segments[0] = remark(segments[0], "\\")
-        if not last_branch or last_line_error:
-            segments[-1] = remark(segments[-1], "X")
-    return "\n".join(segments)
+    pass
 
 
 # TODO: not used (yet)
@@ -285,26 +182,7 @@ def format_oneline_trace(scope):
     unpack a scope into a single line summary
     (shortest summary possible)
     """
-    # the goal here is to do a kind of delta-compression --
-    # if the target is the same, don't repeat it
-    segments = []
-    prev_target = _MISSING
-    for scope, spec, target, error, branches in _unpack_stack(scope, only_errors=False):
-        segments.append('/')
-        if type(spec) in (TType, Path):
-            segments.append(bbrepr(spec))
-        else:
-            segments.append(type(spec).__name__)
-        if target != prev_target:
-            segments.append('!')
-            segments.append(type(target).__name__)
-        if Path in scope:
-            segments.append('<')
-            segments.append('->'.join([str(p) for p in scope[Path]]))
-            segments.append('>')
-        prev_target = target
-
-    return "".join(segments)
+    pass
 
 
 class PathAccessError(GlomError, AttributeError, KeyError, IndexError):
@@ -344,10 +222,6 @@ class PathAccessError(GlomError, AttributeError, KeyError, IndexError):
         self.path = path
         self.part_idx = part_idx
 
-    def get_message(self):
-        path_part = Path(self.path).values()[self.part_idx]
-        return ('could not access %r, part %r of %r, got error: %r'
-                % (path_part, self.part_idx, self.path, self.exc))
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -375,9 +249,6 @@ class PathAssignError(GlomError):
         self.path = path
         self.dest_name = dest_name
 
-    def get_message(self):
-        return ('could not assign %r on object at %r, got error: %r'
-                % (self.dest_name, self.path, self.exc))
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -424,21 +295,6 @@ class CoalesceError(GlomError):
         cn = self.__class__.__name__
         return f'{cn}({self.coal_obj!r}, {self.skipped!r}, {self.path!r})'
 
-    def get_message(self):
-        missed_specs = tuple(self.coal_obj.subspecs)
-        skipped_vals = [v.__class__.__name__
-                        if isinstance(v, self.coal_obj.skip_exc)
-                        else '<skipped %s>' % v.__class__.__name__
-                        for v in self.skipped]
-        msg = ('no valid values found. Tried %r and got (%s)'
-               % (missed_specs, ', '.join(skipped_vals)))
-        if self.coal_obj.skip is not _MISSING:
-            msg += f', skip set to {self.coal_obj.skip!r}'
-        if self.coal_obj.skip_exc is not GlomError:
-            msg += f', skip_exc set to {self.coal_obj.skip_exc!r}'
-        if self.path is not None:
-            msg += f' (at path {self.path!r})'
-        return msg
 
 
 class BadSpec(GlomError, TypeError):
@@ -483,17 +339,6 @@ class UnregisteredTarget(GlomError):
         return ('%s(%r, <type %r>, %r, %r)'
                 % (cn, self.op, self.target_type.__name__, self.type_map, self.path))
 
-    def get_message(self):
-        if not self.type_map:
-            return ("glom() called without registering any types for operation '%s'. see"
-                    " glom.register() or Glommer's constructor for details." % (self.op,))
-        reg_types = sorted([t.__name__ for t, h in self.type_map.items() if h])
-        reg_types_str = '()' if not reg_types else ('(%s)' % ', '.join(reg_types))
-        msg = ("target type %r not registered for '%s', expected one of"
-               " registered types: %s" % (self.target_type.__name__, self.op, reg_types_str))
-        if self.path:
-            msg += f' (at {self.path!r})'
-        return msg
 
 
 if getattr(__builtins__, '__dict__', None) is not None:
@@ -518,11 +363,6 @@ class _BBRepr(Repr):
                 continue
             setattr(self, name, 1024)
 
-    def repr1(self, x, level):
-        ret = Repr.repr1(self, x, level)
-        if not ret.startswith('<'):
-            return ret
-        return _BUILTIN_ID_NAME_MAP.get(id(x), ret)
 
 
 bbrepr = recursive_repr()(_BBRepr().repr)
@@ -533,10 +373,6 @@ class _BBReprFormatter(string.Formatter):
     allow format strings to be evaluated where {!r} will use bbrepr
     instead of repr
     """
-    def convert_field(self, value, conversion):
-        if conversion == 'r':
-            return bbrepr(value).replace("\\'", "'")
-        return super().convert_field(value, conversion)
 
 
 bbformat = _BBReprFormatter().format
@@ -555,23 +391,7 @@ def format_invocation(name='', args=(), kwargs=None, **kw):
     kw_func(a=1, b=2)
 
     """
-    _repr = kw.pop('repr', bbrepr)
-    if kw:
-        raise TypeError('unexpected keyword args: %r' % ', '.join(kw.keys()))
-    kwargs = kwargs or {}
-    a_text = ', '.join([_repr(a) for a in args])
-    if isinstance(kwargs, dict):
-        kwarg_items = [(k, kwargs[k]) for k in sorted(kwargs)]
-    else:
-        kwarg_items = kwargs
-    kw_text = ', '.join([f'{k}={_repr(v)}' for k, v in kwarg_items])
-
-    all_args_text = a_text
-    if all_args_text and kw_text:
-        all_args_text += ', '
-    all_args_text += kw_text
-
-    return f'{name}({all_args_text})'
+    pass
 
 
 class Path:
@@ -646,31 +466,8 @@ class Path:
 
         This is the default behavior when :func:`~glom.glom` gets a string spec.
         """
-        def create():
-            segs = text.split('.')
-            if PATH_STAR:
-                segs = [
-                    _T_STAR if seg == '*' else
-                    _T_STARSTAR if seg == '**' else seg
-                    for seg in segs]
-            elif not cls._STAR_WARNED:
-                if '*' in segs or '**' in segs:
-                    warnings.warn(
-                        "'*' and '**' have changed behavior in glom version 23.1."
-                        " Recommend switch to T['*'] or T['**'].")
-                    cls._STAR_WARNED = True
-            return cls(*segs)
+        pass
 
-        cache = cls._CACHE[PATH_STAR]  # remove this when PATH_STAR is default
-        if text not in cache:
-            if len(cache) > cls._MAX_CACHE:
-                return create()
-            cache[text] = create()
-        return cache[text]
-
-    def glomit(self, target, scope):
-        # The entrypoint for the Path extension
-        return _t_eval(target, self.path_t, scope)
 
     def __len__(self):
         return (len(self.path_t.__ops__) - 1) // 2
@@ -706,24 +503,10 @@ class Path:
         cur_t_path = self.path_t.__ops__
         return tuple(zip(cur_t_path[1::2], cur_t_path[2::2]))
 
-    def startswith(self, other):
-        if isinstance(other, basestring):
-            other = Path(other)
-        if isinstance(other, Path):
-            other = other.path_t
-        if not isinstance(other, TType):
-            raise TypeError('can only check if Path starts with string, Path or T')
-        o_path = other.__ops__
-        return self.path_t.__ops__[:len(o_path)] == o_path
 
     def from_t(self):
         '''return the same path but starting from T'''
-        t_path = self.path_t.__ops__
-        if t_path[0] is S:
-            new_t = TType()
-            new_t.__ops__ = (T,) + t_path[1:]
-            return Path(new_t)
-        return self
+        pass
 
     def __getitem__(self, i):
         cur_t_path = self.path_t.__ops__
@@ -754,28 +537,6 @@ class Path:
         return _format_path(self.path_t.__ops__[1:])
 
 
-def _format_path(t_path):
-    path_parts, cur_t_path = [], []
-    i = 0
-    while i < len(t_path):
-        op, arg = t_path[i], t_path[i + 1]
-        i += 2
-        if op == 'P':
-            if cur_t_path:
-                path_parts.append(cur_t_path)
-                cur_t_path = []
-            path_parts.append(arg)
-        else:
-            cur_t_path.append(op)
-            cur_t_path.append(arg)
-    if path_parts and cur_t_path:
-        path_parts.append(cur_t_path)
-
-    if path_parts or not cur_t_path:
-        return 'Path(%s)' % ', '.join([_format_t(part)
-                                       if type(part) is list else repr(part)
-                                       for part in path_parts])
-    return _format_t(cur_t_path)
 
 
 class Spec:
@@ -805,16 +566,7 @@ class Spec:
         self.spec = spec
         self.scope = scope or {}
 
-    def glom(self, target, **kw):
-        scope = dict(self.scope)
-        scope.update(kw.get('scope', {}))
-        kw['scope'] = ChainMap(scope)
-        glom_ = scope.get(glom, glom)
-        return glom_(target, self.spec, **kw)
 
-    def glomit(self, target, scope):
-        scope.update(self.scope)
-        return scope[glom](target, self.spec, scope)
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -916,25 +668,6 @@ class Coalesce:
         if kwargs:
             raise TypeError(f'unexpected keyword args: {sorted(kwargs.keys())!r}')
 
-    def glomit(self, target, scope):
-        skipped = []
-        for subspec in self.subspecs:
-            try:
-                ret = scope[glom](target, subspec, scope)
-                if not self.skip_func(ret):
-                    break
-                skipped.append(ret)
-            except self.skip_exc as e:
-                skipped.append(e)
-                continue
-        else:
-            if self.default is not _MISSING:
-                ret = arg_val(target, self.default, scope)
-            elif self.default_factory is not _MISSING:
-                ret = self.default_factory()
-            else:
-                raise CoalesceError(self, skipped, scope[Path])
-        return ret
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -1008,36 +741,7 @@ class Inspect:
     def __repr__(self):
         return '<INSPECT>'
 
-    def glomit(self, target, scope):
-        # stash the real handler under Inspect,
-        # and replace the child handler with a trace callback
-        scope[Inspect] = scope[glom]
-        scope[glom] = self._trace
-        return scope[glom](target, self.wrapped, scope)
 
-    def _trace(self, target, spec, scope):
-        if not self.recursive:
-            scope[glom] = scope[Inspect]
-        if self.echo:
-            print('---')
-            # TODO: switch from scope[Path] to the Target-Spec format trace above
-            # ... but maybe be smart about only printing deltas instead of the whole
-            # thing
-            print('path:  ', scope[Path] + [spec])
-            print('target:', target)
-        if self.breakpoint:
-            # TODO: real debugger here?
-            self.breakpoint()
-        try:
-            ret = scope[Inspect](target, spec, scope)
-        except Exception:
-            if self.post_mortem:
-                self.post_mortem()
-            raise
-        if self.echo:
-            print('output:', ret)
-            print('---')
-        return ret
 
 
 class Call:
@@ -1091,22 +795,13 @@ class Call:
 
     def glomit(self, target, scope):
         'run against the current target'
-        r = lambda spec: arg_val(target, spec, scope)
-        return r(self.func)(*r(self.args), **r(self.kwargs))
+        pass
 
     def __repr__(self):
         cn = self.__class__.__name__
         return f'{cn}({bbrepr(self.func)}, args={self.args!r}, kwargs={self.kwargs!r})'
 
 
-def _is_spec(obj, strict=False):
-    # a little util for codifying the spec type checking in glom
-    if isinstance(obj, TType):
-        return True
-    if strict:
-        return type(obj) is Spec
-
-    return _has_callable_glomit(obj)  # pragma: no cover
 
 
 class Invoke:
@@ -1172,7 +867,7 @@ class Invoke:
         [0, 1, 2, 3, 4]
 
         """
-        return cls(Spec(spec))
+        pass
 
     def constants(self, *a, **kw):
         """Returns a new :class:`Invoke` spec, with the provided positional
@@ -1199,11 +894,7 @@ class Invoke:
         methods may be called multiple times, just remember that every
         call returns a new spec.
         """
-        ret = self.__class__(self.func)
-        ret._args = self._args + ('C', a, kw)
-        ret._cur_kwargs = dict(self._cur_kwargs)
-        ret._cur_kwargs.update({k: kw for k, _ in kw.items()})
-        return ret
+        pass
 
     def specs(self, *a, **kw):
         """Returns a new :class:`Invoke` spec, with the provided positional
@@ -1233,11 +924,7 @@ class Invoke:
         call returns a new spec.
 
         """
-        ret = self.__class__(self.func)
-        ret._args = self._args + ('S', a, kw)
-        ret._cur_kwargs = dict(self._cur_kwargs)
-        ret._cur_kwargs.update({k: kw for k, _ in kw.items()})
-        return ret
+        pass
 
     def star(self, args=None, kwargs=None):
         """Returns a new :class:`Invoke` spec, with *args* and/or *kwargs*
@@ -1260,12 +947,7 @@ class Invoke:
         methods, may be called multiple times. The *args* and *kwargs*
         will be stacked in the order in which they are provided.
         """
-        if args is None and kwargs is None:
-            raise TypeError('expected one or both of args/kwargs to be passed')
-        ret = self.__class__(self.func)
-        ret._args = self._args + ('*', args, kwargs)
-        ret._cur_kwargs = dict(self._cur_kwargs)
-        return ret
+        pass
 
     def __repr__(self):
         base_fname = self.__class__.__name__
@@ -1295,30 +977,6 @@ class Invoke:
 
         return ''.join(chunks)
 
-    def glomit(self, target, scope):
-        all_args = []
-        all_kwargs = {}
-
-        recurse = lambda spec: scope[glom](target, spec, scope)
-        func = recurse(self.func) if _is_spec(self.func, strict=True) else self.func
-
-        for i in range(len(self._args) // 3):
-            op, args, kwargs = self._args[i * 3: i * 3 + 3]
-            if op == 'C':
-                all_args.extend(args)
-                all_kwargs.update({k: v for k, v in kwargs.items()
-                                   if self._cur_kwargs[k] is kwargs})
-            elif op == 'S':
-                all_args.extend([recurse(arg) for arg in args])
-                all_kwargs.update({k: recurse(v) for k, v in kwargs.items()
-                                   if self._cur_kwargs[k] is kwargs})
-            elif op == '*':
-                if args is not None:
-                    all_args.extend(recurse(args))
-                if kwargs is not None:
-                    all_kwargs.update(recurse(kwargs))
-
-        return func(*all_args, **all_kwargs)
 
 
 class Ref:
@@ -1333,14 +991,6 @@ class Ref:
     def __init__(self, name, subspec=_MISSING):
         self.name, self.subspec = name, subspec
 
-    def glomit(self, target, scope):
-        subspec = self.subspec
-        scope_key = (Ref, self.name)
-        if subspec is _MISSING:
-            subspec = scope[scope_key]
-        else:
-            scope[scope_key] = subspec
-        return scope[glom](target, subspec, scope)
 
     def __repr__(self):
         if self.subspec is _MISSING:
@@ -1509,15 +1159,6 @@ class TType:
         self.__ops__ = ({'T': T, 'S': S, 'A': A}[state[0]],) + state[1:]
 
 
-def _t_child(parent, operation, arg):
-    base = parent.__ops__
-    if base[0] is A and operation not in ('.', '[', 'P'):
-        # whitelist rather than blacklist assignment friendly operations
-        # TODO: error type?
-        raise BadSpec("operation not allowed on A assignment path")
-    t = TType()
-    t.__ops__ = base + (operation, arg)
-    return t
 
 
 def _s_first_magic(scope, key, _t):
@@ -1525,176 +1166,16 @@ def _s_first_magic(scope, key, _t):
     enable S.a to do S['a'] or S['a'].val as a special
     case for accessing user defined string variables
     """
-    err = None
-    try:
-        cur = scope[key]
-    except KeyError as e:
-        err = PathAccessError(e, Path(_t), 0)  # always only one level depth, hence 0
-    if err:
-        raise err
-    return cur
+    pass
 
 
-def _t_eval(target, _t, scope):
-    t_path = _t.__ops__
-    i = 1
-    fetch_till = len(t_path)
-    root = t_path[0]
-    if root is T:
-        cur = target
-    elif root is S or root is A:
-        # A is basically the same as S, but last step is assign
-        if root is A:
-            fetch_till -= 2
-            if fetch_till < 1:
-                raise BadSpec('cannot assign without destination')
-        cur = scope
-        if fetch_till > 1 and t_path[1] in ('.', 'P'):
-            cur = _s_first_magic(cur, t_path[2], _t)
-            i += 2
-        elif root is S and fetch_till > 1 and t_path[1] == '(':
-            # S(var='spec') style assignment
-            _, kwargs = t_path[2]
-            scope.update({
-                k: arg_val(target, v, scope) for k, v in kwargs.items()})
-            return target
-
-    else:
-        raise ValueError('TType instance with invalid root')  # pragma: no cover
-    pae = None
-    while i < fetch_till:
-        op, arg = t_path[i], t_path[i + 1]
-        arg = arg_val(target, arg, scope)
-        if op == '.':
-            try:
-                cur = getattr(cur, arg)
-            except AttributeError as e:
-                pae = PathAccessError(e, Path(_t), i // 2)
-        elif op == '[':
-            try:
-                cur = cur[arg]
-            except (KeyError, IndexError, TypeError) as e:
-                pae = PathAccessError(e, Path(_t), i // 2)
-        elif op == 'P':
-            # Path type stuff (fuzzy match)
-            get = scope[TargetRegistry].get_handler('get', cur, path=t_path[2:i+2:2])
-            try:
-                cur = get(cur, arg)
-            except Exception as e:
-                pae = PathAccessError(e, Path(_t), i // 2)
-        elif op in 'xX':
-            nxt = []
-            get_handler = scope[TargetRegistry].get_handler
-            if op == 'x':  # increases arity of cur each time through
-                # TODO: so many try/except -- could scope[TargetRegistry] stuff be cached on type?
-                _extend_children(nxt, cur, get_handler)
-            elif op == 'X':
-                sofar = set()
-                _extend_children(nxt, cur, get_handler)
-                for item in nxt:
-                    if id(item) not in sofar:
-                        sofar.add(id(item))
-                        _extend_children(nxt, item, get_handler)
-                nxt.insert(0, cur)
-            # handle the rest of the t_path in recursive calls
-            cur = []
-            todo = TType()
-            todo.__ops__ = (root,) + t_path[i+2:]
-            for child in nxt:
-                try:
-                    cur.append(_t_eval(child, todo, scope))
-                except PathAccessError:
-                    pass
-            break  # we handled the rest in recursive call, break loop
-        elif op == '(':
-            args, kwargs = arg
-            scope[Path] += t_path[2:i+2:2]
-            cur = scope[glom](
-                target, Call(cur, args, kwargs), scope)
-            # call with target rather than cur,
-            # because it is probably more intuitive
-            # if args to the call "reset" their path
-            # e.g. "T.a" should mean the same thing
-            # in both of these specs: T.a and T.b(T.a)
-        else:  # arithmetic operators
-            try:
-                if op == '+':
-                    cur = cur + arg
-                elif op == '-':
-                    cur = cur - arg
-                elif op == '*':
-                    cur = cur * arg
-                #elif op == '#':
-                #    cur = cur // arg  # TODO: python 2 friendly approach?
-                elif op == '/':
-                    cur = cur / arg
-                elif op == '%':
-                    cur = cur % arg
-                elif op == ':':
-                    cur = cur ** arg
-                elif op == '&':
-                    cur = cur & arg
-                elif op == '|':
-                    cur = cur | arg
-                elif op == '^':
-                    cur = cur ^ arg
-                elif op == '~':
-                    cur = ~cur
-                elif op == '_':
-                    cur = -cur
-            except (TypeError, ZeroDivisionError) as e:
-                pae = PathAccessError(e, Path(_t), i // 2)
-        if pae:
-            raise pae
-        i += 2
-    if root is A:
-        op, arg = t_path[-2:]
-        if cur is scope:
-            op = '['  # all assignment on scope is setitem
-        _assign_op(dest=cur, op=op, arg=arg, val=target, path=_t, scope=scope)
-        return target  # A should not change the target
-    return cur
 
 
 def _assign_op(dest, op, arg, val, path, scope):
     """helper method for doing the assignment on a T operation"""
-    if op == '[':
-        dest[arg] = val
-    elif op == '.':
-        setattr(dest, arg, val)
-    elif op == 'P':
-        _assign = scope[TargetRegistry].get_handler('assign', dest)
-        try:
-            _assign(dest, arg, val)
-        except Exception as e:
-            raise PathAssignError(e, path, arg)
-    else:  # pragma: no cover
-        raise ValueError('unsupported T operation for assignment')
+    pass
 
 
-def _extend_children(children, item, get_handler):
-    try:  # dict or obj-like
-        keys = get_handler('keys', item)
-        get = get_handler('get', item)
-    except UnregisteredTarget:
-        try:
-            iterate = get_handler('iterate', item)
-        except UnregisteredTarget:
-            pass
-        else:
-            try:  # list-like
-                children.extend(iterate(item))
-            except Exception:
-                pass
-    else:
-        try:
-            for key in keys(item):
-                try:
-                    children.append(get(item, key))
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
 
 T = TType()  # target aka Mr. T aka "this"
@@ -1712,51 +1193,8 @@ UP = make_sentinel('UP')
 ROOT = make_sentinel('ROOT')
 
 
-def _format_slice(x):
-    if type(x) is not slice:
-        return bbrepr(x)
-    fmt = lambda v: "" if v is None else bbrepr(v)
-    if x.step is None:
-        return fmt(x.start) + ":" + fmt(x.stop)
-    return fmt(x.start) + ":" + fmt(x.stop) + ":" + fmt(x.step)
 
 
-def _format_t(path, root=T):
-    prepr = [{T: 'T', S: 'S', A: 'A'}[root]]
-    i = 0
-    while i < len(path):
-        op, arg = path[i], path[i + 1]
-        if op == '.':
-            prepr.append('.' + arg)
-        elif op == '[':
-            if type(arg) is tuple:
-                index = ", ".join([_format_slice(x) for x in arg])
-            else:
-                index = _format_slice(arg)
-            prepr.append(f"[{index}]")
-        elif op == '(':
-            args, kwargs = arg
-            prepr.append(format_invocation(args=args, kwargs=kwargs, repr=bbrepr))
-        elif op == 'P':
-            return _format_path(path)
-        elif op == 'x':
-            prepr.append(".__star__()")
-        elif op == 'X':
-            prepr.append(".__starstar__()")
-        elif op in ('_', '~'):  # unary arithmetic operators
-            if any([o in path[:i] for o in '+-/%:&|^~_']):
-                prepr = ['('] + prepr + [')']
-            prepr = ['-' if op == '_' else op] + prepr
-        else:  # binary arithmetic operators
-            formatted_arg = bbrepr(arg)
-            if type(arg) is TType:
-                arg_path = arg.__ops__
-                if any([o in arg_path for o in '+-/%:&|^~_']):
-                    formatted_arg = '(' + formatted_arg + ')'
-            prepr.append(' ' + ('**' if op == ':' else op) + ' ')
-            prepr.append(formatted_arg)
-        i += 2
-    return "".join(prepr)
 
 
 class Val:
@@ -1783,8 +1221,6 @@ class Val:
     def __init__(self, value):
         self.value = value
 
-    def glomit(self, target, scope):
-        return self.value
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -1831,8 +1267,6 @@ class Vars:
         self.base = base
         self.defaults = kw
 
-    def glomit(self, target, spec):
-        return ScopeVars(self.base, self.defaults)
 
     def __repr__(self):
         ret = format_invocation(self.__class__.__name__,
@@ -1857,10 +1291,6 @@ class Let:
             raise TypeError('expected at least one keyword argument')
         self._binding = kw
 
-    def glomit(self, target, scope):
-        scope.update({
-            k: scope[glom](target, v, scope) for k, v in self._binding.items()})
-        return target
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -1878,9 +1308,6 @@ class Auto:
     def __init__(self, spec=None):
         self.spec = spec
 
-    def glomit(self, target, scope):
-        scope[MODE] = AUTO
-        return scope[glom](target, self.spec, scope)
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -1905,65 +1332,17 @@ class _ObjStyleKeysMeta(type):
 class _ObjStyleKeys(_ObjStyleKeysMeta('_AbstractKeys', (object,), {})):
     __metaclass__ = _ObjStyleKeysMeta
 
-    @staticmethod
-    def get_keys(obj):
-        ret = obj.__dict__.keys()
-        return ret
 
 
-def _get_sequence_item(target, index):
-    return target[int(index)]
 
 
 # handlers are 3-arg callables, with args (spec, target, scope)
 # spec is the first argument for convenience in the case
 # that the handler is a method of the spec type
-def _handle_dict(target, spec, scope):
-    ret = type(spec)()  # TODO: works for dict + ordereddict, but sufficient for all?
-    for field, subspec in spec.items():
-        val = scope[glom](target, subspec, scope)
-        if val is SKIP:
-            continue
-        if type(field) in (Spec, TType):
-            field = scope[glom](target, field, scope)
-        ret[field] = val
-    return ret
 
 
-def _handle_list(target, spec, scope):
-    subspec = spec[0]
-    iterate = scope[TargetRegistry].get_handler('iterate', target, path=scope[Path])
-    try:
-        iterator = iterate(target)
-    except Exception as e:
-        raise TypeError('failed to iterate on instance of type %r at %r (got %r)'
-                        % (target.__class__.__name__, Path(*scope[Path]), e))
-    ret = []
-    base_path = scope[Path]
-    for i, t in enumerate(iterator):
-        scope[Path] = base_path + [i]
-        val = scope[glom](t, subspec, scope)
-        if val is SKIP:
-            continue
-        if val is STOP:
-            break
-        ret.append(val)
-    return ret
 
 
-def _handle_tuple(target, spec, scope):
-    res = target
-    for subspec in spec:
-        scope = chain_child(scope)
-        nxt = scope[glom](res, subspec, scope)
-        if nxt is SKIP:
-            continue
-        if nxt is STOP:
-            break
-        res = nxt
-        if not isinstance(subspec, list):
-            scope[Path] += [getattr(subspec, '__name__', subspec)]
-    return res
 
 
 class Pipe:
@@ -1979,8 +1358,6 @@ class Pipe:
     def __init__(self, *steps):
         self.steps = steps
 
-    def glomit(self, target, scope):
-        return _handle_tuple(target, self.steps, scope)
 
     def __repr__(self):
         return self.__class__.__name__ + bbrepr(self.steps)
@@ -2011,53 +1388,10 @@ class TargetRegistry:
         raise_exc=False)
 
         """
-        ret = False
-        obj_type = type(obj)
-        cache_key = (obj_type, op)
-        if cache_key not in self._type_cache:
-            type_map = self.get_type_map(op)
-            if type_map:
-                try:
-                    ret = type_map[obj_type]
-                except KeyError:
-                    type_tree = self._op_type_tree.get(op, {})
-                    closest = self._get_closest_type(obj, type_tree=type_tree)
-                    if closest is None:
-                        ret = False
-                    else:
-                        ret = type_map[closest]
+        pass
 
-            if ret is False and raise_exc:
-                raise UnregisteredTarget(op, obj_type, type_map=type_map, path=path)
 
-            self._type_cache[cache_key] = ret
-        return self._type_cache[cache_key]
 
-    def get_type_map(self, op):
-        try:
-            return self._op_type_map[op]
-        except KeyError:
-            return OrderedDict()
-
-    def _get_closest_type(self, obj, type_tree):
-        default = None
-        for cur_type, sub_tree in type_tree.items():
-            if isinstance(obj, cur_type):
-                sub_type = self._get_closest_type(obj, type_tree=sub_tree)
-                ret = cur_type if sub_type is None else sub_type
-                return ret
-        return default
-
-    def _register_default_types(self):
-        self.register(object)
-        self.register(dict, get=operator.getitem)
-        self.register(dict, keys=dict.keys)
-        self.register(list, get=_get_sequence_item)
-        self.register(tuple, get=_get_sequence_item)
-        self.register(OrderedDict, get=operator.getitem)
-        self.register(OrderedDict, keys=OrderedDict.keys)
-        self.register(_AbstractIterable, iterate=iter)
-        self.register(_ObjStyleKeys, keys=_ObjStyleKeys.get_keys)
 
     def _register_fuzzy_type(self, op, new_type, _type_tree=None):
         """Build a "type tree", an OrderedDict mapping registered types to
@@ -2069,63 +1403,8 @@ class TargetRegistry:
         Order is preserved such that non-overlapping parts of the
         subtree take precedence by which was most recently added.
         """
-        if _type_tree is None:
-            try:
-                _type_tree = self._op_type_tree[op]
-            except KeyError:
-                _type_tree = self._op_type_tree[op] = OrderedDict()
+        pass
 
-        registered = False
-        for cur_type, sub_tree in list(_type_tree.items()):
-            if issubclass(cur_type, new_type):
-                sub_tree = _type_tree.pop(cur_type)  # mutation for recursion brevity
-                try:
-                    _type_tree[new_type][cur_type] = sub_tree
-                except KeyError:
-                    _type_tree[new_type] = OrderedDict({cur_type: sub_tree})
-                registered = True
-            elif issubclass(new_type, cur_type):
-                _type_tree[cur_type] = self._register_fuzzy_type(op, new_type, _type_tree=sub_tree)
-                registered = True
-        if not registered:
-            _type_tree[new_type] = OrderedDict()
-        return _type_tree
-
-    def register(self, target_type, **kwargs):
-        if not isinstance(target_type, type):
-            raise TypeError(f'register expected a type, not an instance: {target_type!r}')
-        exact = kwargs.pop('exact', None)
-        new_op_map = dict(kwargs)
-
-        for op_name in sorted(set(self._op_auto_map.keys()) | set(new_op_map.keys())):
-            cur_type_map = self._op_type_map.setdefault(op_name, OrderedDict())
-
-            if op_name in new_op_map:
-                handler = new_op_map[op_name]
-            elif target_type in cur_type_map:
-                handler = cur_type_map[target_type]
-            else:
-                try:
-                    handler = self._op_auto_map[op_name](target_type)
-                except Exception as e:
-                    raise TypeError('error while determining support for operation'
-                                    ' "%s" on target type: %s (got %r)'
-                                    % (op_name, target_type.__name__, e))
-            if handler is not False and not callable(handler):
-                raise TypeError('expected handler for op "%s" to be'
-                                ' callable or False, not: %r' % (op_name, handler))
-            new_op_map[op_name] = handler
-
-        for op_name, handler in new_op_map.items():
-            self._op_type_map[op_name][target_type] = handler
-
-        if not exact:
-            for op_name in new_op_map:
-                self._register_fuzzy_type(op_name, target_type)
-
-        self._type_cache = {}  # reset type cache
-
-        return
 
     def register_op(self, op_name, auto_func=None, exact=False):
         """add operations beyond the builtins ('get' and 'iterate' at the time
@@ -2172,12 +1451,6 @@ class TargetRegistry:
         self._op_type_tree[op_name] = type_tree
         self._op_auto_map[op_name] = auto_func
 
-    def _register_builtin_ops(self):
-        def _get_iterable_handler(type_obj):
-            return iter if callable(getattr(type_obj, '__iter__', None)) else False
-
-        self.register_op('iterate', _get_iterable_handler)
-        self.register_op('get', lambda _: getattr)
 
 
 _DEFAULT_SCOPE = ChainMap({})
@@ -2250,50 +1523,7 @@ def glom(target, spec, **kwargs):
     only surpassed by its intuitiveness. Give it a whirl!
 
     """
-    # TODO: check spec up front
-    default = kwargs.pop('default', None if 'skip_exc' in kwargs else _MISSING)
-    skip_exc = kwargs.pop('skip_exc', () if default is _MISSING else GlomError)
-    glom_debug = kwargs.pop('glom_debug', GLOM_DEBUG)
-    scope = _DEFAULT_SCOPE.new_child({
-        Path: kwargs.pop('path', []),
-        Inspect: kwargs.pop('inspector', None),
-        MODE: AUTO,
-        MIN_MODE: None,
-        CHILD_ERRORS: [],
-        'globals': ScopeVars({}, {}),
-    })
-    scope[UP] = scope
-    scope[ROOT] = scope
-    scope[T] = target
-    scope.update(kwargs.pop('scope', {}))
-    err = None
-    if kwargs:
-        raise TypeError('unexpected keyword args: %r' % sorted(kwargs.keys()))
-    try:
-        try:
-            ret = _glom(target, spec, scope)
-        except skip_exc:
-            if default is _MISSING:
-                raise
-            ret = default  # should this also be arg_val'd?
-    except Exception as e:
-        if glom_debug:
-            raise
-        if isinstance(e, GlomError):
-            # need to change id or else py3 seems to not let us truncate the
-            # stack trace with the explicit "raise err" below
-            err = copy.copy(e)
-            err._set_wrapped(e)
-        else:
-            err = GlomError.wrap(e)
-        if isinstance(err, GlomError):
-            err._finalize(scope[LAST_CHILD_SCOPE])
-        else:  # wrapping failed, fall back to default behavior
-            raise
-
-    if err:
-        raise err
-    return ret
+    pass
 
 
 def chain_child(scope):
@@ -2306,77 +1536,16 @@ def chain_child(scope):
 
     scope[glom](target, spec, chain_child(scope))
     """
-    if LAST_CHILD_SCOPE not in scope.maps[0]:
-        return scope  # no children yet, nothing to do
-    # NOTE: an option here is to drill down on LAST_CHILD_SCOPE;
-    # this would have some interesting consequences for scoping
-    # of tuples
-    nxt_in_chain = scope[LAST_CHILD_SCOPE]
-    nxt_in_chain.maps[0][NO_PYFRAME] = True
-    # previous failed branches are forgiven as the
-    # scope is re-wired into a new stack
-    del nxt_in_chain.maps[0][CHILD_ERRORS][:]
-    return nxt_in_chain
+    pass
 
 
 unbound_methods = {type(str.__len__)} #, type(Ref.glomit)])
 
 
-def _has_callable_glomit(obj):
-    glomit = getattr(obj, 'glomit', None)
-    return callable(glomit)  and not isinstance(obj, type)
 
 
-def _glom(target, spec, scope):
-    parent = scope
-    pmap = parent.maps[0]
-    scope = scope.new_child({
-        T: target,
-        Spec: spec,
-        UP: parent,
-        CHILD_ERRORS: [],
-        MODE: pmap[MODE],
-        MIN_MODE: pmap[MIN_MODE],
-    })
-    pmap[LAST_CHILD_SCOPE] = scope
-
-    try:
-        if type(spec) is TType:  # must go first, due to callability
-            scope[MIN_MODE] = None  # None is tombstone
-            return _t_eval(target, spec, scope)
-        elif _has_callable_glomit(spec):
-            scope[MIN_MODE] = None
-            return spec.glomit(target, scope)
-
-        return (scope.maps[0][MIN_MODE] or scope.maps[0][MODE])(target, spec, scope)
-    except Exception as e:
-        scope.maps[1][CHILD_ERRORS].append(scope)
-        scope.maps[0][CUR_ERROR] = e
-        if NO_PYFRAME in scope.maps[1]:
-            cur_scope = scope[UP]
-            while NO_PYFRAME in cur_scope.maps[0]:
-                cur_scope.maps[1][CHILD_ERRORS].append(cur_scope)
-                cur_scope.maps[0][CUR_ERROR] = e
-                cur_scope = cur_scope[UP]
-        raise
 
 
-def AUTO(target, spec, scope):
-    if type(spec) is str:  # shortcut to make deep-get use case faster
-        return _t_eval(target, Path.from_text(spec).path_t, scope)
-    if isinstance(spec, dict):
-        return _handle_dict(target, spec, scope)
-    elif isinstance(spec, list):
-        return _handle_list(target, spec, scope)
-    elif isinstance(spec, tuple):
-        return _handle_tuple(target, spec, scope)
-    elif isinstance(spec, basestring):
-        return Path.from_text(spec).glomit(target, scope)
-    elif callable(spec):
-        return spec(target)
-
-    raise TypeError('expected spec to be dict, list, tuple, callable, string,'
-                    ' or other Spec-like type, not: %r' % (spec,))
 
 
 _DEFAULT_SCOPE.update({
@@ -2424,8 +1593,7 @@ def register(target_type, **kwargs):
        methods instead.
 
     """
-    _DEFAULT_SCOPE[TargetRegistry].register(target_type, **kwargs)
-    return
+    pass
 
 
 def register_op(op_name, **kwargs):
@@ -2497,12 +1665,8 @@ class Glommer:
            methods instead.
 
         """
-        exact = kwargs.pop('exact', False)
-        self.scope[TargetRegistry].register(target_type, exact=exact, **kwargs)
-        return
+        pass
 
-    def glom(self, target, spec, **kwargs):
-        return glom(target, spec, scope=self.scope, **kwargs)
 
 
 class Fill:
@@ -2527,12 +1691,7 @@ class Fill:
     def __init__(self, spec=None):
         self.spec = spec
 
-    def glomit(self, target, scope):
-        scope[MODE] = FILL
-        return scope[glom](target, self.spec, scope)
 
-    def fill(self, target):
-        return glom(target, self)
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -2540,21 +1699,6 @@ class Fill:
         return f'{cn}({rpr})'
 
 
-def FILL(target, spec, scope):
-    # TODO: register an operator or two for the following to allow
-    # extension. This operator can probably be shared with the
-    # upcoming traversal/remap feature.
-    recurse = lambda val: scope[glom](target, val, scope)
-    if type(spec) is dict:
-        return {recurse(key): recurse(val) for key, val in spec.items()}
-    if type(spec) in (list, tuple, set, frozenset):
-        result = [recurse(val) for val in spec]
-        if type(spec) is list:
-            return result
-        return type(spec)(result)
-    if callable(spec):
-        return spec(target)
-    return spec
 
 class _ArgValuator:
     def __init__(self):
@@ -2565,19 +1709,7 @@ class _ArgValuator:
         similar to FILL, but without function calling;
         useful for default, scope assignment, call/invoke, etc
         """
-        recur = lambda val: scope[glom](target, val, scope)
-        result = spec
-        if type(spec) in (list, dict):  # can contain themselves
-            if id(spec) in self.cache:
-                return self.cache[id(spec)]
-            result = self.cache[id(spec)] = type(spec)()
-            if type(spec) is dict:
-                result.update({recur(key): recur(val) for key, val in spec.items()})
-            else:
-                result.extend([recur(val) for val in spec])
-        if type(spec) in (tuple, set, frozenset):  # cannot contain themselves
-            result = type(spec)([recur(val) for val in spec])
-        return result
+        pass
 
 
 def arg_val(target, arg, scope):
@@ -2585,8 +1717,4 @@ def arg_val(target, arg, scope):
     evaluate an argument to find its value
     (arg_val phonetically similar to "eval" -- evaluate as an arg)
     """
-    mode = scope[MIN_MODE]
-    scope[MIN_MODE] = _ArgValuator().mode
-    result = scope[glom](target, arg, scope)
-    scope[MIN_MODE] = mode
-    return result
+    pass

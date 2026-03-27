@@ -37,9 +37,6 @@ class MatchError(GlomError):
     def __init__(self, fmt, *args):
         super().__init__(fmt, *args)
 
-    def get_message(self):
-        fmt, args = self.args[0], self.args[1:]
-        return bbformat(fmt, *args)
 
 
 class TypeMatchError(MatchError, TypeError):
@@ -145,15 +142,6 @@ class Match:
         self.spec = spec
         self.default = default
 
-    def glomit(self, target, scope):
-        scope[MODE] = _glom_match
-        try:
-            ret = scope[glom](target, self.spec, scope)
-        except GlomError:
-            if self.default is _MISSING:
-                raise
-            ret = arg_val(target, self.default, scope)
-        return ret
 
     def verify(self, target):
         """A convenience function a :class:`Match` instance which returns the
@@ -167,7 +155,7 @@ class Match:
           glom.MatchError
 
         """
-        return glom(target, self)
+        pass
 
     def matches(self, target):
         """A convenience method on a :class:`Match` instance, returns
@@ -179,11 +167,7 @@ class Match:
         Args:
            target: Target value or data structure to match against.
         """
-        try:
-            glom(target, self)
-        except GlomError:
-            return False
-        return True
+        pass
 
     def __repr__(self):
         return f'{self.__class__.__name__}({bbrepr(self.spec)})'
@@ -231,15 +215,6 @@ class Regex:
         self.flags, self.func = flags, func
         self.match_func, self.pattern = match_func, pattern
 
-    def glomit(self, target, scope):
-        if type(target) not in _RE_TYPES:
-            raise MatchError(
-                "{0!r} not valid as a Regex target -- expected {1!r}", type(target), _RE_TYPES)
-        match = self.match_func(target)
-        if not match:
-            raise MatchError("target did not match pattern {0!r}", self.pattern)
-        scope.update(match.groupdict())
-        return target
 
     def __repr__(self):
         args = '(' + bbrepr(self.pattern)
@@ -252,12 +227,6 @@ class Regex:
 
 
 #TODO: combine this with other functionality elsewhere?
-def _bool_child_repr(child):
-    if child is M:
-        return repr(child)
-    elif isinstance(child, _MExpr):
-        return "(" + bbrepr(child) + ")"
-    return bbrepr(child)
 
 
 class _Bool:
@@ -279,22 +248,10 @@ class _Bool:
     def __invert__(self):
         return Not(self)
 
-    def glomit(self, target, scope):
-        try:
-            return self._glomit(target, scope)
-        except GlomError:
-            if self.default is not _MISSING:
-                return arg_val(target, self.default, scope)
-            raise
 
     def _m_repr(self):
         """should this Or() repr as M |?"""
-        # only used by And() and Or(), not Not(), so len(children) >= 1
-        if isinstance(self.children[0], (_MType, _MExpr)):
-            return True
-        if type(self.children[0]) in (And, Or, Not):
-            return self.children[0]._m_repr()
-        return False
+        pass
 
     def __repr__(self):
         child_reprs = [_bool_child_repr(c) for c in self.children]
@@ -313,12 +270,6 @@ class And(_Bool):
     OP = "&"
     __slots__ = ('children',)
 
-    def _glomit(self, target, scope):
-        # all children must match without exception
-        result = target  # so that And() == True, similar to all([]) == True
-        for child in self.children:
-            result = scope[glom](target, child, scope)
-        return result
 
     def __and__(self, other):
         # reduce number of layers of spec
@@ -334,13 +285,6 @@ class Or(_Bool):
     OP = "|"
     __slots__ = ('children',)
 
-    def _glomit(self, target, scope):
-        for child in self.children[:-1]:
-            try:  # one child must match without exception
-                return scope[glom](target, child, scope)
-            except GlomError:
-                pass
-        return scope[glom](target, self.children[-1], scope)
 
     def __or__(self, other):
         # reduce number of layers of spec
@@ -360,20 +304,7 @@ class Not(_Bool):
     def __init__(self, child):
         self.child = child
 
-    def glomit(self, target, scope):
-        try:  # one child must match without exception
-            scope[glom](target, self.child, scope)
-        except GlomError:
-            return target
-        else:
-            raise GlomError("child shouldn't have passed", self.child)
 
-    def _m_repr(self):
-        if isinstance(self.child, (_MType, _MExpr)):
-            return True
-        if type(self.child) not in (And, Or, Not):
-            return False
-        return self.child._m_repr()
 
     def __repr__(self):
         if self.child is M:
@@ -414,11 +345,6 @@ class _MSubspec:
     def __repr__(self):
         return f'M({bbrepr(self.spec)})'
 
-    def glomit(self, target, scope):
-        match = scope[glom](target, self.spec, scope)
-        if match:
-            return target
-        raise MatchError('expected truthy value from {0!r}, got {1!r}', self.spec, match)
 
 
 class _MExpr:
@@ -438,27 +364,6 @@ class _MExpr:
     def __invert__(self):
         return Not(self)
 
-    def glomit(self, target, scope):
-        lhs, op, rhs = self.lhs, self.op, self.rhs
-        if lhs is M:
-            lhs = target
-        if rhs is M:
-            rhs = target
-        if type(lhs) is _MSubspec:
-            lhs = scope[glom](target, lhs.spec, scope)
-        if type(rhs) is _MSubspec:
-            rhs = scope[glom](target, rhs.spec, scope)
-        matched = (
-            (op == '=' and lhs == rhs) or
-            (op == '!' and lhs != rhs) or
-            (op == '>' and lhs > rhs) or
-            (op == '<' and lhs < rhs) or
-            (op == 'g' and lhs >= rhs) or
-            (op == 'l' and lhs <= rhs)
-        )
-        if matched:
-            return target
-        raise MatchError("{0!r} {1} {2!r}", lhs, _M_OP_MAP.get(op, op), rhs)
 
     def __repr__(self):
         op = _M_OP_MAP.get(self.op, self.op)
@@ -558,10 +463,6 @@ class _MType:
     def __repr__(self):
         return "M"
 
-    def glomit(self, target, spec):
-        if target:
-            return target
-        raise MatchError("{0!r} not truthy", target)
 
 
 M = _MType()
@@ -596,10 +497,6 @@ class Optional:
             raise ValueError(f"Optional() keys must be == match constants, not {key!r}")
         self.key, self.default = key, default
 
-    def glomit(self, target, scope):
-        if target != self.key:
-            raise MatchError("target {0} != spec {1}", target, self.key)
-        return target
 
     def __repr__(self):
         return f'{self.__class__.__name__}({bbrepr(self.key)})'
@@ -661,104 +558,11 @@ def _precedence(match):
     therefore we need a precedence for which order to try
     keys in; higher = later
     """
-    if type(match) in (Required, Optional):
-        match = match.key
-    if type(match) in (tuple, frozenset):
-        if not match:
-            return 0
-        return max([_precedence(item) for item in match])
-    if isinstance(match, type):
-        return 2
-    if hasattr(match, "glomit"):
-        return 1
-    return 0  # == match
+    pass
 
 
-def _handle_dict(target, spec, scope):
-    if not isinstance(target, dict):
-        raise TypeMatchError(type(target), dict)
-    spec_keys = spec  # cheating a little bit here, list-vs-dict, but saves an object copy sometimes
-
-    required = {
-        key for key in spec_keys
-        if _precedence(key) == 0 and type(key) is not Optional
-        or type(key) is Required}
-    defaults = {  # pre-load result with defaults
-        key.key: key.default for key in spec_keys
-        if type(key) is Optional and key.default is not _MISSING}
-    result = {}
-    for key, val in target.items():
-        for maybe_spec_key in spec_keys:
-            # handle Required as a special case here rather than letting it be a stand-alone spec
-            if type(maybe_spec_key) is Required:
-                spec_key = maybe_spec_key.key
-            else:
-                spec_key = maybe_spec_key
-            try:
-                key = scope[glom](key, spec_key, scope)
-            except GlomError:
-                pass
-            else:
-                result[key] = scope[glom](val, spec[maybe_spec_key], chain_child(scope))
-                required.discard(maybe_spec_key)
-                break
-        else:
-            raise MatchError("key {0!r} didn't match any of {1!r}", key, spec_keys)
-    for key in set(defaults) - set(result):
-        result[key] = arg_val(target, defaults[key], scope)
-    if required:
-        raise MatchError("target missing expected keys: {0}", ', '.join([bbrepr(r) for r in required]))
-    return result
 
 
-def _glom_match(target, spec, scope):
-    if isinstance(spec, type):
-        if not isinstance(target, spec):
-            raise TypeMatchError(type(target), spec)
-    elif isinstance(spec, dict):
-        return _handle_dict(target, spec, scope)
-    elif isinstance(spec, (list, set, frozenset)):
-        if not isinstance(target, type(spec)):
-            raise TypeMatchError(type(target), type(spec))
-        result = []
-        for item in target:
-            for child in spec:
-                try:
-                    result.append(scope[glom](item, child, scope))
-                    break
-                except GlomError as e:
-                    last_error = e
-            else:  # did not break, something went wrong
-                if target and not spec:
-                    raise MatchError(
-                        "{0!r} does not match empty {1}", target, type(spec).__name__)
-                # NOTE: unless error happens above, break will skip else branch
-                # so last_error will have been assigned
-                raise last_error
-        if type(spec) is not list:
-            return type(spec)(result)
-        return result
-    elif isinstance(spec, tuple):
-        if not isinstance(target, tuple):
-            raise TypeMatchError(type(target), tuple)
-        if len(target) != len(spec):
-            raise MatchError("{0!r} does not match {1!r}", target, spec)
-        result = []
-        for sub_target, sub_spec in zip(target, spec):
-            result.append(scope[glom](sub_target, sub_spec, scope))
-        return tuple(result)
-    elif callable(spec):
-        try:
-            if spec(target):
-                return target
-        except Exception as e:
-            raise MatchError(
-                "{0}({1!r}) did not validate (got exception {2!r})", spec.__name__, target, e)
-        raise MatchError(
-            "{0}({1!r}) did not validate (non truthy return)", spec.__name__, target)
-    elif target != spec:
-        raise MatchError("{0!r} does not match {1!r}", target, spec)
-    return target
 
 
 class Switch:
@@ -845,16 +649,6 @@ class Switch:
         return
 
 
-    def glomit(self, target, scope):
-        for keyspec, valspec in self.cases:
-            try:
-                scope[glom](target, keyspec, scope)
-            except GlomError as ge:
-                continue
-            return scope[glom](target, valspec, chain_child(scope))
-        if self.default is not _MISSING:
-            return arg_val(target, self.default, scope)
-        raise MatchError("no matches for target in %s"  % self.__class__.__name__)
 
     def __repr__(self):
         return f'{self.__class__.__name__}({bbrepr(self.cases)})'
@@ -900,25 +694,10 @@ class Check:
         self._orig_kwargs = dict(kwargs)
         self.default = kwargs.pop('default', RAISE)
 
-        def _get_arg_val(name, cond, func, val, can_be_empty=True):
-            if val is _MISSING:
-                return ()
-            if not is_iterable(val):
-                val = (val,)
-            elif not val and not can_be_empty:
-                raise ValueError('expected %r argument to contain at least one value,'
-                                 ' not: %r' % (name, val))
-            for v in val:
-                if not func(v):
-                    raise ValueError('expected %r argument to be %s, not: %r'
-                                     % (name, cond, v))
-            return val
 
         # if there are other common validation functions, maybe a
         # small set of special strings would work as valid arguments
         # to validate, too.
-        def truthy(val):
-            return bool(val)
 
         validate = kwargs.pop('validate', _MISSING if kwargs else truthy)
         type_arg = kwargs.pop('type', _MISSING)
@@ -955,57 +734,6 @@ class Check:
         "for internal use inside of Check only"
         pass
 
-    def glomit(self, target, scope):
-        ret = target
-        errs = []
-        if self.spec is not T:
-            target = scope[glom](target, self.spec, scope)
-        if self.types and type(target) not in self.types:
-            if self.default is not RAISE:
-                return arg_val(target, self.default, scope)
-            errs.append('expected type to be %r, found type %r' %
-                        (self.types[0].__name__ if len(self.types) == 1
-                         else tuple([t.__name__ for t in self.types]),
-                         type(target).__name__))
-
-        if self.vals and target not in self.vals:
-            if self.default is not RAISE:
-                return arg_val(target, self.default, scope)
-            if len(self.vals) == 1:
-                errs.append(f"expected {self.vals[0]}, found {target}")
-            else:
-                errs.append(f'expected one of {self.vals}, found {target}')
-
-        if self.validators:
-            for i, validator in enumerate(self.validators):
-                try:
-                    res = validator(target)
-                    if res is False:
-                        raise self._ValidationError
-                except Exception as e:
-                    msg = ('expected %r check to validate target'
-                           % getattr(validator, '__name__', None) or ('#%s' % i))
-                    if type(e) is self._ValidationError:
-                        if self.default is not RAISE:
-                            return self.default
-                    else:
-                        msg += ' (got exception: %r)' % e
-                    errs.append(msg)
-
-        if self.instance_of and not isinstance(target, self.instance_of):
-            # TODO: can these early returns be done without so much copy-paste?
-            # (early return to avoid potentially expensive or even error-causeing
-            # string formats)
-            if self.default is not RAISE:
-                return arg_val(target, self.default, scope)
-            errs.append('expected instance of %r, found instance of %r' %
-                        (self.instance_of[0].__name__ if len(self.instance_of) == 1
-                         else tuple([t.__name__ for t in self.instance_of]),
-                         type(target).__name__))
-
-        if errs:
-            raise CheckError(errs, self, scope[Path])
-        return ret
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -1039,15 +767,6 @@ class CheckError(GlomError):
         self.check_obj = check
         self.path = path
 
-    def get_message(self):
-        msg = 'target at path %s failed check,' % self.path
-        if self.check_obj.spec is not T:
-            msg += f' subtarget at {self.check_obj.spec!r}'
-        if len(self.msgs) == 1:
-            msg += f' got error: {self.msgs[0]!r}'
-        else:
-            msg += f' got {len(self.msgs)} errors: {self.msgs!r}'
-        return msg
 
     def __repr__(self):
         cn = self.__class__.__name__

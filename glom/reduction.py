@@ -65,36 +65,8 @@ class Fold:
             raise TypeError('expected callable for %s init param, not: %r' %
                             (self.__class__.__name__, init))
 
-    def glomit(self, target, scope):
-        is_agg = False
-        if scope[MODE] is GROUP and scope.get(CUR_AGG) is None:
-            scope[CUR_AGG] = self
-            is_agg = True
 
-        if self.subspec is not T:
-            target = scope[glom](target, self.subspec, scope)
 
-        if is_agg:
-            return self._agg(target, scope[ACC_TREE])
-        try:
-            return self._fold(target_iter(target, scope))
-        except UnregisteredTarget as ut:
-            raise FoldError('can only %s on iterable targets, not %s type (%s)'
-                            % (self.__class__.__name__, type(target).__name__, ut))
-
-    def _fold(self, iterator):
-        ret, op = self.init(), self.op
-
-        for v in iterator:
-            ret = op(ret, v)
-
-        return ret
-
-    def _agg(self, target, tree):
-        if self not in tree:
-            tree[self] = self.init()
-        tree[self] = self.op(tree[self], target)
-        return tree[self]
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -170,10 +142,6 @@ class Flatten(Fold):
             self.lazy = False
         super().__init__(subspec=subspec, init=init, op=operator.iadd)
 
-    def _fold(self, iterator):
-        if self.lazy:
-            return itertools.chain.from_iterable(iterator)
-        return super()._fold(iterator)
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -246,21 +214,7 @@ def flatten(target, **kwargs):
     :class:`Fold`.
 
     """
-    subspec = kwargs.pop('spec', T)
-    init = kwargs.pop('init', list)
-    levels = kwargs.pop('levels', 1)
-    if kwargs:
-        raise TypeError('unexpected keyword args: %r' % sorted(kwargs.keys()))
-
-    if levels == 0:
-        return target
-    if levels < 0:
-        raise ValueError('expected levels >= 0, not %r' % levels)
-    spec = (subspec,)
-    spec += (Flatten(init="lazy"),) * (levels - 1)
-    spec += (Flatten(init=init),)
-
-    return glom(target, spec)
+    pass
 
 
 class Merge(Fold):
@@ -299,24 +253,8 @@ class Merge(Fold):
                              ' method not %r and %r' % (op, init))
         super().__init__(subspec=subspec, init=init, op=op)
 
-    def _fold(self, iterator):
-        # the difference here is that ret is mutated in-place, the
-        # variable not being reassigned, as in base Fold.
-        ret, op = self.init(), self.op
-
-        for v in iterator:
-            op(ret, v)
-
-        return ret
 
 
-    def _agg(self, target, tree):
-        if self not in tree:
-            acc = tree[self] = self.init()
-        else:
-            acc = tree[self]
-        self.op(acc, target)
-        return acc
 
 
 def merge(target, **kwargs):
@@ -339,10 +277,4 @@ def merge(target, **kwargs):
     spec.
 
     """
-    subspec = kwargs.pop('spec', T)
-    init = kwargs.pop('init', dict)
-    op = kwargs.pop('op', None)
-    if kwargs:
-        raise TypeError('unexpected keyword args: %r' % sorted(kwargs.keys()))
-    spec = Merge(subspec, init, op)
-    return glom(target, spec)
+    pass

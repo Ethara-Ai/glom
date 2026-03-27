@@ -51,20 +51,8 @@ class PathDeleteError(PathAssignError):
     ``@property`` or exception being raised inside a ``__delattr__()``.
 
     """
-    def get_message(self):
-        return ('could not delete %r on object at %r, got error: %r'
-                % (self.dest_name, self.path, self.exc))
 
 
-def _apply_for_each(func, path, val):
-    layers = path.path_t.__stars__()
-    if layers:
-        for i in range(layers - 1):
-            val = sum(val, [])  # flatten out the extra layers
-        for inner in val:
-            func(inner)
-    else:
-        func(val)
 
 
 class Assign:
@@ -158,35 +146,6 @@ class Assign:
                 raise TypeError(f'expected missing to be callable, not {missing!r}')
         self.missing = missing
 
-    def glomit(self, target, scope):
-        val = arg_val(target, self.val, scope)
-
-        op, arg, path = self.op, self.arg, self.path
-        if self.path.startswith(S):
-            dest_target = scope[UP]
-            dest_path = self.path.from_t()
-        else:
-            dest_target = target
-            dest_path = self.path
-        try:
-            dest = scope[glom](dest_target, dest_path, scope)
-        except PathAccessError as pae:
-            if not self.missing:
-                raise
-
-            remaining_path = self._orig_path[pae.part_idx + 1:]
-            val = scope[glom](self.missing(), Assign(remaining_path, val, missing=self.missing), scope)
-
-            op, arg = self._orig_path.items()[pae.part_idx]
-            path = self._orig_path[:pae.part_idx]
-            dest = scope[glom](dest_target, path, scope)
-
-        # TODO: forward-detect immutable dest?
-        _apply = lambda dest: _assign_op(
-            dest=dest, op=op, arg=arg, val=val, path=path, scope=scope)
-        _apply_for_each(_apply, path, dest)
-
-        return target
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -210,7 +169,7 @@ def assign(obj, path, val, missing=None):
     *missing* parameter. For more information and examples, see the
     :class:`~glom.Assign` specifier type, which this function wraps.
     """
-    return glom(obj, Assign(path, val, missing=missing))
+    pass
 
 
 _ALL_BUILTIN_TYPES = [v for v in __builtins__.values() if isinstance(v, type)]
@@ -221,21 +180,8 @@ _UNASSIGNABLE_BASE_TYPES = tuple(set(_BUILTIN_BASE_TYPES)
                                  - {dict, list, BaseException, object, type})
 
 
-def _set_sequence_item(target, idx, val):
-    target[int(idx)] = val
 
 
-def _assign_autodiscover(type_obj):
-    # TODO: issubclass or "in"?
-    if issubclass(type_obj, _UNASSIGNABLE_BASE_TYPES):
-        return False
-
-    if callable(getattr(type_obj, '__setitem__', None)):
-        if callable(getattr(type_obj, 'index', None)):
-            return _set_sequence_item
-        return operator.setitem
-
-    return setattr
 
 
 register_op('assign', auto_func=_assign_autodiscover, exact=False)
@@ -288,44 +234,7 @@ class Delete:
 
         self.ignore_missing = ignore_missing
 
-    def _del_one(self, dest, op, arg, scope):
-        if op == '[':
-            try:
-                del dest[arg]
-            except IndexError as e:
-                if not self.ignore_missing:
-                    raise PathDeleteError(e, self.path, arg)
-        elif op == '.':
-            try:
-                delattr(dest, arg)
-            except AttributeError as e:
-                if not self.ignore_missing:
-                    raise PathDeleteError(e, self.path, arg)
-        elif op == 'P':
-            _delete = scope[TargetRegistry].get_handler('delete', dest)
-            try:
-                _delete(dest, arg)
-            except Exception as e:
-                if not self.ignore_missing:
-                    raise PathDeleteError(e, self.path, arg)
 
-    def glomit(self, target, scope):
-        op, arg, path = self.op, self.arg, self.path
-        if self.path.startswith(S):
-            dest_target = scope[UP]
-            dest_path = self.path.from_t()
-        else:
-            dest_target = target
-            dest_path = self.path
-        try:
-            dest = scope[glom](dest_target, dest_path, scope)
-        except PathAccessError as pae:
-            if not self.ignore_missing:
-                raise
-        else:
-            _apply_for_each(lambda dest: self._del_one(dest, op, arg, scope), path, dest)
-
-        return target
 
     def __repr__(self):
         cn = self.__class__.__name__
@@ -353,22 +262,11 @@ def delete(obj, path, ignore_missing=False):
 
     .. versionadded:: 20.5.0
     """
-    return glom(obj, Delete(path, ignore_missing=ignore_missing))
+    pass
 
 
-def _del_sequence_item(target, idx):
-    del target[int(idx)]
 
 
-def _delete_autodiscover(type_obj):
-    if issubclass(type_obj, _UNASSIGNABLE_BASE_TYPES):
-        return False
-
-    if callable(getattr(type_obj, '__delitem__', None)):
-        if callable(getattr(type_obj, 'index', None)):
-            return _del_sequence_item
-        return operator.delitem
-    return delattr
 
 
 register_op('delete', auto_func=_delete_autodiscover, exact=False)
